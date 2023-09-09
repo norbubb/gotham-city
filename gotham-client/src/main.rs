@@ -7,27 +7,25 @@
 // version 3 of the License, or (at your option) any later version.
 //
 
-use clap::*;
-use client_lib::wallet;
-use client_lib::ClientShim;
-use ethers::prelude::*;
-use ethers::{
-    core::{
-        types::transaction::eip2718::TypedTransaction, types::TransactionRequest, utils::Anvil,
-    },
-    middleware::SignerMiddleware,
-    providers::{Http, Middleware, Provider},
-    signers::{LocalWallet, Signer},
-};
-use eyre::Result;
-use floating_duration::TimeFormat;
-use rand::rngs::mock::StepRng;
-use rand::Rng;
-use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::convert::TryFrom;
-use std::time::Instant;
-pub use two_party_ecdsa::curv::BigInt;
+
+use bitcoin::hashes::hex::ToHex;
+use clap::*;
+use ethers::{
+    core::{
+        types::transaction::eip2718::TypedTransaction, types::TransactionRequest,
+    },
+    providers::{Http, Middleware, Provider},
+    signers::Signer,
+};
+use ethers::prelude::*;
+use eyre::Result;
+use rand::rngs::mock::StepRng;
+use sha2::{Digest, Sha256};
+
+use client_lib::ClientShim;
+use client_lib::wallet;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -54,11 +52,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         create,
         /// load an existing wallet
         load,
+        /// drive new Address
+        new,
         /// sign with the existing wallet
         // #[command(subcommand)]
-        sign { name: Option<String> },
+        sign { address: String },
         /// sign an eth transaction
-        eth,
+        eth { address: String },
     }
     let args = walletArgs::parse();
     let mut rng = StepRng::new(0, 1);
@@ -86,11 +86,20 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             wallet.save();
             println!("Network: [{}], Wallet saved to disk", &network);
         }
+
+        Action::new {} => {
+            let mut wallet: wallet::Wallet = wallet::Wallet::load();
+            println!("Load wallet: [{}]", wallet.id);
+            let address = wallet.get_new_eth_address();
+            println!("Network: [{}], Wallet: {} saved to disk", &network, "0x".to_owned() + &address.to_hex());
+            wallet.save();
+        }
+
         Action::load {} => {
             println!("'load: ");
             let mut wallet: wallet::Wallet = wallet::Wallet::load();
         }
-        Action::sign { name } => {
+        Action::sign { address } => {
             let mut wallet: wallet::Wallet = wallet::Wallet::load();
             println!("Load wallet: [{}]", wallet.id);
             println!("Sign: ");
@@ -105,10 +114,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
             // read hash digest and consume hasher
             let msg = hasher.finalize();
-            wallet.sign(&msg, &client_shim);
+            wallet.sign(&msg, &address, &client_shim);
             println!("Network: [{}], MPC signature verified", &network);
         }
-        Action::eth {} => {
+        Action::eth { address } => {
             const RPC_URL: &str = "https://eth.llamarpc.com";
             println!("'derive: ");
             let mut wallet: wallet::Wallet = wallet::Wallet::load();
@@ -132,7 +141,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 data: None,
                 chain_id: Some(U64::one()),
             }
-            .into();
+                .into();
             // create a Sha256 object
             let mut hasher = Sha256::new();
 
@@ -143,7 +152,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let msg = hasher.finalize();
             let transaction = serde_json::to_string(&tx).unwrap();
             println!("Transaction tx:{:?}", transaction);
-            wallet.sign(&msg, &client_shim);
+            wallet.sign(&msg, &address, &client_shim);
         }
     }
 
