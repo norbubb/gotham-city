@@ -8,9 +8,15 @@
 //
 
 use std::collections::HashMap;
+use std::env;
 use std::fs;
 use std::str;
 use std::str::FromStr;
+
+use std::fs::File;
+use std::io::prelude::*;
+use std::path::{Path, PathBuf};
+use dirs::document_dir;
 
 use bitcoin::hashes::hex::ToHex;
 use hex;
@@ -62,8 +68,11 @@ pub struct Wallet {
 
 impl Wallet {
     pub fn new<C: Client>(client_shim: &ClientShim<C>, net: &str) -> Wallet {
+        println!("'create wallet ---------------- 2");
         let id = Uuid::new_v4().to_string();
+        println!("'create wallet ---------------- 3");
         let private_share = ecdsa::get_master_key(client_shim);
+        println!("'create wallet ---------------- 4");
         let last_derived_pos = 0;
         let addresses_derivation_map = HashMap::new();
         let network = net;
@@ -90,23 +99,93 @@ impl Wallet {
         return address;
     }
 
-    pub fn save_to(&self, filepath: &str) {
-        let wallet_json = serde_json::to_string(self).unwrap();
+    // pub fn save_to(&self, filepath: &str) {
+    //     let wallet_json = serde_json::to_string(self).unwrap();
 
-        fs::write(filepath, wallet_json).expect("Unable to save wallet!");
+    //     fs::write(filepath, wallet_json).expect("Unable to save wallet!");
 
-        debug!("(wallet id: {}) Saved wallet to disk", self.id);
+    //     debug!("(wallet id: {}) Saved wallet to disk", self.id);
+    // }
+
+    pub fn get_documents_directory() -> Option<PathBuf> {
+        let documents_dir: Option<PathBuf> = if cfg!(target_os = "windows") {
+            document_dir()
+        } else if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
+            document_dir()
+        } else if cfg!(target_os = "linux") {
+            let home_dir = env::var("HOME").ok()?;
+            Some(PathBuf::from(home_dir).join("Documents"))
+        } else if cfg!(target_os = "android") {
+            Some(Path::new("/sdcard/Documents").to_path_buf())
+        } else {
+            None
+        };
+    
+        if let Some(mut dir) = documents_dir {
+            fs::create_dir_all(&dir).ok()?;
+            // if cfg!(target_os != "ios" ) {
+            //     dir.push("Documents");
+            // }
+            
+            Some(dir)
+        } else {
+            None
+        }
     }
+
+    pub fn save_to(&self, filename: &str) {
+        let wallet_json = serde_json::to_string(self).unwrap();
+        
+        if let Some(mut documents_dir) = Self::get_documents_directory() {
+            documents_dir.push(filename);
+            
+            let save_path = Path::new(&documents_dir);
+            let mut file = match File::create(save_path) {
+                Ok(file) => file,
+                Err(err) => {
+                    eprintln!("save_to Unable to create file {:?}: {}", save_path, err);
+                    return;
+                }
+            };
+            
+            if let Err(err) = file.write_all(wallet_json.as_bytes()) {
+                eprintln!("Unable to save wallet to {:?}: {}", save_path, err);
+                return;
+            }
+        
+            println!("Saved wallet to disk: {:?}", save_path);
+        } else {
+            println!("Unable to get documents directory");
+        }
+    }
+
+    
 
     pub fn save(&self) {
         self.save_to(WALLET_FILENAME)
     }
 
+        // pub fn load_from(filepath: &str) -> Wallet {
+        //     let data = fs::read_to_string(filepath).expect("Unable to load wallet!");
+        //     let wallet: Wallet = serde_json::from_str(&data).unwrap();
+        //     debug!("(wallet id: {}) Loaded wallet to memory", wallet.id);
+        //     wallet
+        // }
+
     pub fn load_from(filepath: &str) -> Wallet {
-        let data = fs::read_to_string(filepath).expect("Unable to load wallet!");
-        let wallet: Wallet = serde_json::from_str(&data).unwrap();
-        debug!("(wallet id: {}) Loaded wallet to memory", wallet.id);
-        wallet
+        if let Some(mut documents_dir) = Self::get_documents_directory() {
+            let load_path = documents_dir.join(filepath);
+            
+            if let Ok(data) = fs::read_to_string(load_path.clone()) {
+                let wallet: Wallet = serde_json::from_str(&data).unwrap();
+                debug!("(wallet id: {}) Loaded wallet to memory", wallet.id);
+                return wallet;
+            } else {
+                panic!("Unable to load wallet from {}", load_path.to_string_lossy());
+            }
+        } else {
+            panic!("Unable to get documents directory");
+        }
     }
 
     pub fn load() -> Wallet {

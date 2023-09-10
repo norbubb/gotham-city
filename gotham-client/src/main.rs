@@ -7,7 +7,7 @@
 // version 3 of the License, or (at your option) any later version.
 //
 
-use std::collections::HashMap;
+use std::{collections::HashMap, ffi::c_longlong};
 use std::convert::TryFrom;
 
 use bitcoin::hashes::hex::ToHex;
@@ -24,8 +24,12 @@ use eyre::Result;
 use rand::rngs::mock::StepRng;
 use sha2::{Digest, Sha256};
 
-use client_lib::ClientShim;
+use client_lib::{ClientShim, create_client, create_wallet};
 use client_lib::wallet;
+
+use std::ffi::CString;
+use core::mem;
+
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
@@ -38,6 +42,15 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     //     #[command(subcommand)]
     //     pub second:Action,
     // }
+
+
+    // let client_ptr = create_client(rust_string_to_cstr("http://localhost:8000"));
+
+    // let wallet_ptr = create_wallet(rust_string_to_cstr("test_xxx"), client_ptr);
+
+    // println!("wallet_ptr = {}",wallet_ptr);
+
+
 
     #[derive(clap::Parser)]
     struct walletArgs {
@@ -75,11 +88,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let hm = settings.try_into::<HashMap<String, String>>().unwrap();
     let endpoint = hm.get("endpoint").unwrap();
 
-    let client_shim = ClientShim::new(endpoint.to_string(), None);
+    let client_shim: ClientShim<reqwest::Client> = ClientShim::new(endpoint.to_string(), None);
 
-    let network = "testnet".to_string();
+    let network: String = "testnet".to_string();
     match &args.action {
-        Action::create {} => {
+        Action::create {} => {  
             println!("'create: ");
             println!("Network: [{}], Creating wallet", network);
             let wallet = wallet::Wallet::new(&client_shim, &network);

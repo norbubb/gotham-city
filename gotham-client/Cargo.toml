@@ -10,7 +10,7 @@ edition = "2021"
 jni = { version = "0.19", default-features = false }
 
 [lib]
-#crate-type = ["staticlib", "cdylib", "lib"]
+crate-type = ["staticlib", "cdylib", "lib"]
 name = "client_lib"
 path = "src/lib.rs"
 
@@ -44,6 +44,8 @@ eyre = "0.6.8"
 sha2 = "0.10.6"
 sha3 = "0.10.8"
 ethereum-types = "0.14.1"
+dirs = "2.0"
+
 
 [dev-dependencies]
 mockall = "0.11"
