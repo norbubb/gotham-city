@@ -68,11 +68,8 @@ pub struct Wallet {
 
 impl Wallet {
     pub fn new<C: Client>(client_shim: &ClientShim<C>, net: &str) -> Wallet {
-        println!("'create wallet ---------------- 2");
         let id = Uuid::new_v4().to_string();
-        println!("'create wallet ---------------- 3");
         let private_share = ecdsa::get_master_key(client_shim);
-        println!("'create wallet ---------------- 4");
         let last_derived_pos = 0;
         let addresses_derivation_map = HashMap::new();
         let network = net;

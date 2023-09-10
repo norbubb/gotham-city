@@ -178,7 +178,6 @@ pub extern "C" fn add_method(nx: i32, ny: i32) -> i32{
 
 #[no_mangle]
 pub unsafe extern "C" fn contact_with_str(inx: *const c_char) -> *mut c_char{
-    info!("contact_with_str -------- rust!");
     let c_str = unsafe { CStr::from_ptr(inx) };
     let recipient = match c_str.to_str() {
         Err(_) => "there",
@@ -236,7 +235,6 @@ pub extern "C" fn create_wallet(network: *const c_char, cclient_shim_num_ptr: c_
     println!("'create: ");
     println!("Network: [{}], Creating wallet", network_rs);
     let wallet = wallet::Wallet::new(&cclient_shim, &network_rs);
-    println!("'create wallet ---------------- 1");
     wallet.save();
     println!("Network: [{}], Wallet saved to disk", &network_rs);
 
@@ -246,7 +244,6 @@ pub extern "C" fn create_wallet(network: *const c_char, cclient_shim_num_ptr: c_
 #[no_mangle]
 pub extern "C" fn drive_new_address_wallet(network: *const c_char,) ->  *mut c_char{
 
-    info!("drive_new_address_wallet -------- rust!");
     let network_c = unsafe { CStr::from_ptr(network) };
     let network_rs = match network_c.to_str() {
         Err(_) => "Endpoint Invalid!",
