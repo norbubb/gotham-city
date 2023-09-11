@@ -25,11 +25,12 @@ use ethers::prelude::*;
 use rand::rngs::mock::StepRng;
 use sha2::{Digest, Sha256};
 
+
 // use ClientShim;
 // use wallet;
 
 use floating_duration::TimeFormat;
-use log::info;
+use log::{info, warn};
 use serde::{de::DeserializeOwned, Serialize};
 use std::time::Instant;
 pub mod ecdsa;
@@ -49,10 +50,16 @@ extern crate reqwest;
 extern crate serde;
 extern crate serde_json;
 
+#[macro_use] 
 extern crate log;
+extern crate android_logger;
+
+use log::LevelFilter;
+use android_logger::{Config,FilterBuilder};
 
 #[macro_use]
 extern crate failure;
+
 //
 // extern crate bitcoin;
 // extern crate electrumx_client;
@@ -167,12 +174,27 @@ pub use two_party_ecdsa::curv::{arithmetic::traits::Converter, BigInt};
 // pub use multi_party_eddsa::protocols::aggsig::*;
 
 
+
 pub fn r_error_to_c_string(e: failure::Error) -> *mut c_char {
     CString::new(format!("Error: {}", e)).unwrap().into_raw()
 }
 
 #[no_mangle]
+pub unsafe extern "C" fn recv_android_path(android_path: *const c_char){
+    let ap_st = unsafe { CStr::from_ptr(android_path) };
+    let ap_rstr = match ap_st.to_str() {
+        Err(_) => "there",
+        Ok(string) => string,
+    };
+    let mut go_android_path = wallet::GOTHAM_ANDROID_PATH.write().expect("Could not acquire write lock");
+    *go_android_path = String::from(ap_rstr);
+}
+
+#[no_mangle]
 pub extern "C" fn add_method(nx: i32, ny: i32) -> i32{
+    android_logger::init_once(
+        Config::default().with_max_level(LevelFilter::Trace),
+    );
     return nx + ny;
 }
 
@@ -204,25 +226,12 @@ pub extern  "C" fn create_client(endpoint: *const c_char) -> c_longlong{
     Box::into_raw(Box::new(client_shim)) as c_longlong
 }
 
-/**
- * 这里可能会有一些问题
- * 1. iOS/Android/PC端的路径或者沙盒兼容性问题，
- * 2. 根据 1，下面函数中wallet创建的路径都是直接用的FILENAME，这个在PC上没有问题，
- *    代表是的当前路径，但是Android/iOS就有问题了，路径就是个错误的
- * 3. 在Create Wallet后，会有一个保存wallet的操作，但是save方法的存储路径也是默认的
- *    故此也存在 2 中的问题
- * 4. 如果std:fs 能自动适配iOS/Android那么上述问题就不存在
- * 5. createWallet 返回类型是一个wallet的指针值
-*/
-#[no_mangle]
-pub extern "C" fn create_wallet(network: *const c_char, cclient_shim_num_ptr: c_longlong) -> c_longlong{
-    let network_c = unsafe { CStr::from_ptr(network) };
-    let network_rs = match network_c.to_str() {
-        Err(_) => "Endpoint Invalid!",
-        Ok(string) => string,
-    };
 
-    let cclient_shim_ptr = cclient_shim_num_ptr as *mut ClientShim<reqwest::Client>;
+#[no_mangle]
+pub extern "C" fn create_wallet(cclient_shim_num_ptr: c_longlong) -> c_longlong{
+    let network_rs = "mainnet-testnet";
+
+    let cclient_shim_ptr: *mut ClientShim<reqwest::Client> = cclient_shim_num_ptr as *mut ClientShim<reqwest::Client>;
 
     assert!(!cclient_shim_ptr.is_null(), "cclient_shim_ptr is null!");
 
@@ -234,27 +243,22 @@ pub extern "C" fn create_wallet(network: *const c_char, cclient_shim_num_ptr: c_
 
     println!("'create: ");
     println!("Network: [{}], Creating wallet", network_rs);
+    
     let wallet = wallet::Wallet::new(&cclient_shim, &network_rs);
     wallet.save();
-    println!("Network: [{}], Wallet saved to disk", &network_rs);
+    // println!("Network: [{}], Wallet saved to disk", &network_rs);
 
     Box::into_raw(Box::new(wallet)) as c_longlong
 }   
 
 #[no_mangle]
-pub extern "C" fn drive_new_address_wallet(network: *const c_char,) ->  *mut c_char{
-
-    let network_c = unsafe { CStr::from_ptr(network) };
-    let network_rs = match network_c.to_str() {
-        Err(_) => "Endpoint Invalid!",
-        Ok(string) => string,
-    };
-
+pub extern "C" fn drive_new_address_wallet() ->  *mut c_char{
     let mut wallet: wallet::Wallet = wallet::Wallet::load();
     println!("Load wallet: [{}]", wallet.id);
     let address = wallet.get_new_eth_address();
-    println!("Network: [{}], Wallet: {} saved to disk", &network_rs, "0x".to_owned() + &address.to_hex());
+    println!("Network: [], Wallet: {} saved to disk",  "0x".to_owned() + &address.to_hex());
     wallet.save();
+    
 
     CString::new(address.to_hex()).unwrap().into_raw()
 }
@@ -268,11 +272,10 @@ pub extern "C" fn load_wallet() -> c_longlong{
 }
 
 #[no_mangle]
-pub extern "C" fn simple_sign_message(msg: *const c_char, address: *const c_char, network: *const c_char, cclient_shim_num_ptr: c_longlong){
+pub extern "C" fn simple_sign_message(msg: *const c_char, address: *const c_char, cclient_shim_num_ptr: c_longlong){
     let mut wallet: wallet::Wallet = wallet::Wallet::load();
     println!("Load wallet: [{}]", wallet.id);
     println!("Sign: ");
-
     let msg_c = unsafe { CStr::from_ptr(msg) };
     let msg_rs = match msg_c.to_str() {
         Err(_) => "Endpoint Invalid!",
@@ -281,38 +284,25 @@ pub extern "C" fn simple_sign_message(msg: *const c_char, address: *const c_char
 
     let mut msg_buf = "Test Signature";
     println!("message: [{}]", msg_buf);
-
     let address_c = unsafe { CStr::from_ptr(address) };
     let address_rs = match address_c.to_str() {
         Err(_) => "ETH Address Invalid!",
         Ok(string) => string,
     };
-
-    let network_c = unsafe { CStr::from_ptr(network) };
-    let network_rs = match network_c.to_str() {
-        Err(_) => "Endpoint Invalid!",
-        Ok(string) => string,
-    };
-
+    let network_rs = "mainnet-testnet";
     let cclient_shim_ptr = cclient_shim_num_ptr as *mut ClientShim<reqwest::Client>;
-
     let cclient_shim: &mut ClientShim<reqwest::Client> = unsafe {
         assert!(!cclient_shim_ptr.is_null());
         &mut *cclient_shim_ptr
     };
-
     // create a Sha256 object
     let mut hasher = Sha256::new();
-
     // write input message
     hasher.update(msg_buf);
-
     // read hash digest and consume hasher
     let e_msg = hasher.finalize();
-
     wallet.sign(&e_msg, &address_rs, &cclient_shim);
     println!("Network: [{}], MPC signature verified", &network_rs);
-
 }
 
 

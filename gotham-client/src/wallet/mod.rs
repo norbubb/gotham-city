@@ -13,6 +13,8 @@ use std::fs;
 use std::str;
 use std::str::FromStr;
 
+use cfg_if::cfg_if;
+
 use std::fs::File;
 use std::io::prelude::*;
 use std::path::{Path, PathBuf};
@@ -43,6 +45,12 @@ use super::ecdsa;
 use super::ecdsa::types::PrivateShare;
 
 const WALLET_FILENAME: &str = "mywallet";
+
+use once_cell::sync::Lazy;
+use std::sync::RwLock;
+
+pub static GOTHAM_ANDROID_PATH: Lazy<RwLock<String>> = Lazy::new(|| RwLock::new(String::from("mywallet")));
+
 
 #[derive(Serialize, Deserialize)]
 pub struct SignSecondMsgRequest {
@@ -104,36 +112,57 @@ impl Wallet {
     //     debug!("(wallet id: {}) Saved wallet to disk", self.id);
     // }
 
-    pub fn get_documents_directory() -> Option<PathBuf> {
-        let documents_dir: Option<PathBuf> = if cfg!(target_os = "windows") {
-            document_dir()
-        } else if cfg!(target_os = "macos") || cfg!(target_os = "ios") {
-            document_dir()
-        } else if cfg!(target_os = "linux") {
-            let home_dir = env::var("HOME").ok()?;
-            Some(PathBuf::from(home_dir).join("Documents"))
-        } else if cfg!(target_os = "android") {
-            Some(Path::new("/sdcard/Documents").to_path_buf())
-        } else {
-            None
-        };
-    
-        if let Some(mut dir) = documents_dir {
-            fs::create_dir_all(&dir).ok()?;
-            // if cfg!(target_os != "ios" ) {
-            //     dir.push("Documents");
-            // }
-            
-            Some(dir)
-        } else {
-            None
+
+    pub fn get_app_sandbox_path() -> Option<PathBuf> {
+        cfg_if! {
+            if #[cfg(target_os = "ios")] {
+                // iOS 沙盒路径获取逻辑
+                if let Ok(home_dir) = env::var("HOME") {
+                    let app_sandbox_dir = PathBuf::from(format!("{}/Documents", home_dir));
+                    Some(app_sandbox_dir)
+                } else {
+                    None
+                }
+            } else if #[cfg(target_os = "android")] {
+                // Android 沙盒路径获取逻辑
+                let android_path = GOTHAM_ANDROID_PATH.read().expect("Could not acquire read lock");
+                let app_sandbox_dir = PathBuf::from(format!("{}", android_path));
+                return Some(app_sandbox_dir);
+            } else if #[cfg(target_os = "linux")] {
+                // Linux 沙盒路径获取逻辑
+                if let Ok(home_dir) = env::var("HOME") {
+                    let app_sandbox_dir = PathBuf::from(format!("{}/.sandbox", home_dir));
+                    Some(app_sandbox_dir)
+                } else {
+                    None
+                }
+            } else if #[cfg(target_os = "macos")] {
+                // macOS 沙盒路径获取逻辑
+                if let Ok(home_dir) = env::var("HOME") {
+                    let app_sandbox_dir = PathBuf::from(format!("{}/Library/Sandbox", home_dir));
+                    Some(app_sandbox_dir)
+                } else {
+                    None
+                }
+            } else if #[cfg(target_os = "windows")] {
+                // Windows 沙盒路径获取逻辑
+                if let Ok(app_data_dir) = env::var("APPDATA") {
+                    let app_sandbox_dir = PathBuf::from(format!("{}/sandbox", app_data_dir));
+                    Some(app_sandbox_dir)
+                } else {
+                    None
+                }
+            } else {
+                None // 其他操作系统暂不支持
+         
+            }
         }
     }
 
     pub fn save_to(&self, filename: &str) {
         let wallet_json = serde_json::to_string(self).unwrap();
         
-        if let Some(mut documents_dir) = Self::get_documents_directory() {
+        if let Some(mut documents_dir) = Self::get_app_sandbox_path() {
             documents_dir.push(filename);
             
             let save_path = Path::new(&documents_dir);
@@ -144,12 +173,10 @@ impl Wallet {
                     return;
                 }
             };
-            
             if let Err(err) = file.write_all(wallet_json.as_bytes()) {
                 eprintln!("Unable to save wallet to {:?}: {}", save_path, err);
                 return;
             }
-        
             println!("Saved wallet to disk: {:?}", save_path);
         } else {
             println!("Unable to get documents directory");
@@ -170,9 +197,16 @@ impl Wallet {
         // }
 
     pub fn load_from(filepath: &str) -> Wallet {
-        if let Some(mut documents_dir) = Self::get_documents_directory() {
+        info!("load_from filepath = {}",filepath);
+        if let Some(mut documents_dir) = Self::get_app_sandbox_path() {
             let load_path = documents_dir.join(filepath);
-            
+
+            if let Some(path_str) = load_path.to_str() {
+                println!("Path value: {}", path_str);
+            } else {
+                println!("Failed to convert PathBuf to str");
+            }
+
             if let Ok(data) = fs::read_to_string(load_path.clone()) {
                 let wallet: Wallet = serde_json::from_str(&data).unwrap();
                 debug!("(wallet id: {}) Loaded wallet to memory", wallet.id);
@@ -198,9 +232,7 @@ impl Wallet {
         if !self.addresses_derivation_map.contains_key(address) {
             panic!("do not Owned this address")
         }
-
         let key = self.addresses_derivation_map.get(address).unwrap();
-
         let signature = ecdsa::sign(
             client_shim,
             BigInt::from(&msg[..]),
@@ -210,17 +242,13 @@ impl Wallet {
             &self.private_share.id,
         )
             .expect("ECDSA signature failed");
-
         let r = BigInt::to_vec(&signature.r);
         let s = BigInt::to_vec(&signature.s);
-
         let message = Message::from_slice(msg).unwrap();
-
         println!(
             "hash{:?},\nsignature: [r={},s={}]",
             msg, &signature.r, &signature.s
         );
-
         return signature;
 
         //prepare signature to be verified from secp256k1 lib
