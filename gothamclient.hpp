@@ -10,26 +10,28 @@ static const uintptr_t NUM_SEGMENTS = 32;
 
 extern "C" {
 
+void recv_android_path(const char *android_path);
+
 int32_t add_method(int32_t nx, int32_t ny);
 
 char *contact_with_str(const char *inx);
 
 long long create_client(const char *endpoint);
 
-///  * 这里可能会有一些问题  * 1. iOS/Android/PC端的路径或者沙盒兼容性问题，  * 2. 根据 1，下面函数中wallet创建的路径都是直接用的FILENAME，这个在PC上没有问题，  *    代表是的当前路径，但是Android/iOS就有问题了，路径就是个错误的  * 3. 在Create Wallet后，会有一个保存wallet的操作，但是save方法的存储路径也是默认的  *    故此也存在 2 中的问题  * 4. 如果std:fs 能自动适配iOS/Android那么上述问题就不存在  * 5. createWallet 返回类型是一个wallet的指针值
-long long create_wallet(const char *network,
-                        long long cclient_shim_num_ptr);
+long long create_wallet(long long cclient_shim_num_ptr, const char *wallet_name);
 
-char *drive_new_address_wallet(const char *network);
+char *drive_new_address_wallet(const char *wallet_name);
 
-long long load_wallet();
+const char *wallet_path(const char *wallet_name);
 
-void simple_sign_message(const char *msg,
-                         const char *address,
-                         const char *network,
-                         long long cclient_shim_num_ptr);
+long long load_wallet(const char *wallet_name);
 
-void eth_enter(long long cclient_shim_num_ptr, const char *address);
+char *simple_sign_message(const char *msg,
+                          const char *wallet_name,
+                          const char *address,
+                          long long cclient_shim_num_ptr);
+
+const char *eth_enter(long long cclient_shim_num_ptr, const char *wallet_name, const char *address);
 
 /// # Safety
 ///

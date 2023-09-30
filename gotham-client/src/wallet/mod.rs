@@ -103,22 +103,14 @@ impl Wallet {
 
         return address;
     }
-
-    // pub fn save_to(&self, filepath: &str) {
-    //     let wallet_json = serde_json::to_string(self).unwrap();
-
-    //     fs::write(filepath, wallet_json).expect("Unable to save wallet!");
-
-    //     debug!("(wallet id: {}) Saved wallet to disk", self.id);
-    // }
-
+    
 
     pub fn get_app_sandbox_path() -> Option<PathBuf> {
         cfg_if! {
             if #[cfg(target_os = "ios")] {
                 // iOS 沙盒路径获取逻辑
                 if let Ok(home_dir) = env::var("HOME") {
-                    let app_sandbox_dir = PathBuf::from(format!("{}/Documents", home_dir));
+                    let app_sandbox_dir = PathBuf::from(format!("{}/Documents/mpc_wallet_plugin", home_dir));
                     Some(app_sandbox_dir)
                 } else {
                     None
@@ -126,12 +118,12 @@ impl Wallet {
             } else if #[cfg(target_os = "android")] {
                 // Android 沙盒路径获取逻辑
                 let android_path = GOTHAM_ANDROID_PATH.read().expect("Could not acquire read lock");
-                let app_sandbox_dir = PathBuf::from(format!("{}", android_path));
+                let app_sandbox_dir = PathBuf::from(format!("{}/mpc_wallet_plugin", android_path));
                 return Some(app_sandbox_dir);
             } else if #[cfg(target_os = "linux")] {
                 // Linux 沙盒路径获取逻辑
                 if let Ok(home_dir) = env::var("HOME") {
-                    let app_sandbox_dir = PathBuf::from(format!("{}/.sandbox", home_dir));
+                    let app_sandbox_dir = PathBuf::from(format!("{}/.sandbox/mpc_wallet_plugin", home_dir));
                     Some(app_sandbox_dir)
                 } else {
                     None
@@ -139,7 +131,7 @@ impl Wallet {
             } else if #[cfg(target_os = "macos")] {
                 // macOS 沙盒路径获取逻辑
                 if let Ok(home_dir) = env::var("HOME") {
-                    let app_sandbox_dir = PathBuf::from(format!("{}/Library/Sandbox", home_dir));
+                    let app_sandbox_dir = PathBuf::from(format!("{}/Library/Sandbox/mpc_wallet_plugin", home_dir));
                     Some(app_sandbox_dir)
                 } else {
                     None
@@ -147,7 +139,7 @@ impl Wallet {
             } else if #[cfg(target_os = "windows")] {
                 // Windows 沙盒路径获取逻辑
                 if let Ok(app_data_dir) = env::var("APPDATA") {
-                    let app_sandbox_dir = PathBuf::from(format!("{}/sandbox", app_data_dir));
+                    let app_sandbox_dir = PathBuf::from(format!("{}/sandbox/mpc_wallet_plugin", app_data_dir));
                     Some(app_sandbox_dir)
                 } else {
                     None
@@ -183,18 +175,13 @@ impl Wallet {
         }
     }
 
-    
-
     pub fn save(&self) {
         self.save_to(WALLET_FILENAME)
     }
 
-        // pub fn load_from(filepath: &str) -> Wallet {
-        //     let data = fs::read_to_string(filepath).expect("Unable to load wallet!");
-        //     let wallet: Wallet = serde_json::from_str(&data).unwrap();
-        //     debug!("(wallet id: {}) Loaded wallet to memory", wallet.id);
-        //     wallet
-        // }
+    pub fn save_file(&self, file_name: String) {
+        self.save_to(file_name.as_str())
+    }
 
     pub fn load_from(filepath: &str) -> Wallet {
         info!("load_from filepath = {}",filepath);
@@ -223,14 +210,18 @@ impl Wallet {
         Wallet::load_from(WALLET_FILENAME)
     }
 
+    pub fn loadwith(file_name: String) -> Wallet {
+        Wallet::load_from(file_name.as_str())
+    }
+
     pub fn sign<C: Client>(
         &mut self,
         msg: &[u8],
         address: &str,
         client_shim: &ClientShim<C>,
-    ) -> SignatureRecid {
+    ) -> Option<SignatureRecid> {
         if !self.addresses_derivation_map.contains_key(address) {
-            panic!("do not Owned this address")
+            return None;
         }
         let key = self.addresses_derivation_map.get(address).unwrap();
         let signature = ecdsa::sign(
@@ -249,7 +240,7 @@ impl Wallet {
             "hash{:?},\nsignature: [r={},s={}]",
             msg, &signature.r, &signature.s
         );
-        return signature;
+        return Some(signature);
 
         //prepare signature to be verified from secp256k1 lib
 

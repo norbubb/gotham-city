@@ -47,8 +47,6 @@ extern crate reqwest;
 
 #[macro_use]
 // extern crate serde_derive;
-extern crate serde;
-extern crate serde_json;
 
 #[macro_use] 
 extern crate log;
@@ -56,6 +54,8 @@ extern crate android_logger;
 
 use log::LevelFilter;
 use android_logger::{Config,FilterBuilder};
+
+use serde_json::{self, json};
 
 #[macro_use]
 extern crate failure;
@@ -222,14 +222,19 @@ pub extern  "C" fn create_client(endpoint: *const c_char) -> c_longlong{
     
     client_shim.test(1);
 
-
     Box::into_raw(Box::new(client_shim)) as c_longlong
 }
 
 
 #[no_mangle]
-pub extern "C" fn create_wallet(cclient_shim_num_ptr: c_longlong) -> c_longlong{
+pub extern "C" fn create_wallet(cclient_shim_num_ptr: c_longlong, wallet_name: *const c_char) -> c_longlong{
     let network_rs = "mainnet-testnet";
+
+    let wallet_name_c = unsafe { CStr::from_ptr(wallet_name) };
+    let wallet_name_rs = match wallet_name_c.to_str() {
+        Err(_) => "Endpoint Invalid!",
+        Ok(string) => string,
+    };
 
     let cclient_shim_ptr: *mut ClientShim<reqwest::Client> = cclient_shim_num_ptr as *mut ClientShim<reqwest::Client>;
 
@@ -239,41 +244,85 @@ pub extern "C" fn create_wallet(cclient_shim_num_ptr: c_longlong) -> c_longlong{
         &mut *cclient_shim_ptr
     };
     
-    cclient_shim.test(2);
-
     println!("'create: ");
     println!("Network: [{}], Creating wallet", network_rs);
     
     let wallet = wallet::Wallet::new(&cclient_shim, &network_rs);
-    wallet.save();
+    wallet.save_to(wallet_name_rs);
     // println!("Network: [{}], Wallet saved to disk", &network_rs);
 
     Box::into_raw(Box::new(wallet)) as c_longlong
 }   
 
 #[no_mangle]
-pub extern "C" fn drive_new_address_wallet() ->  *mut c_char{
-    let mut wallet: wallet::Wallet = wallet::Wallet::load();
+pub extern "C" fn drive_new_address_wallet(wallet_name: *const c_char) ->  *mut c_char{
+
+    let wallet_name_c = unsafe { CStr::from_ptr(wallet_name) };
+    let wallet_name_rs = match wallet_name_c.to_str() {
+        Err(_) => "Endpoint Invalid!",
+        Ok(string) => string,
+    };
+
+    let mut wallet: wallet::Wallet = wallet::Wallet::load_from(wallet_name_rs);
     println!("Load wallet: [{}]", wallet.id);
     let address = wallet.get_new_eth_address();
     println!("Network: [], Wallet: {} saved to disk",  "0x".to_owned() + &address.to_hex());
-    wallet.save();
+    wallet.save_to(wallet_name_rs);
     
-
     CString::new(address.to_hex()).unwrap().into_raw()
 }
 
 #[no_mangle]
-pub extern "C" fn load_wallet() -> c_longlong{
+pub extern  "C" fn wallet_path(wallet_name: *const c_char) -> *mut c_char{
+    let wallet_name_c = unsafe { CStr::from_ptr(wallet_name) };
+    let wallet_name_rs = match wallet_name_c.to_str() {
+        Err(_) => "Endpoint Invalid!",
+        Ok(string) => string,
+    };
+
+    let wallet_path = wallet::Wallet::get_app_sandbox_path();
+
+    let result = match wallet_path {
+        Some(path) => {
+            let mPath = path.as_path().to_str();
+            match mPath {
+                Some(path_s) =>{
+                    format!("{}/{}", path_s, wallet_name_rs)
+                },
+                None => "".to_string(),
+            }
+        },
+        None => "".to_string(),
+    };
+
+    return  CString::new(result).unwrap().into_raw();
+}
+
+#[no_mangle]
+pub extern "C" fn load_wallet(wallet_name: *const c_char) -> c_longlong{
     println!("'load: ");
-    let mut wallet: wallet::Wallet = wallet::Wallet::load();
+
+    let wallet_name_c = unsafe { CStr::from_ptr(wallet_name) };
+    let wallet_name_rs = match wallet_name_c.to_str() {
+        Err(_) => "Endpoint Invalid!",
+        Ok(string) => string,
+    };
+
+    let wallet: wallet::Wallet = wallet::Wallet::load_from(wallet_name_rs);
 
     Box::into_raw(Box::new(wallet)) as c_longlong
 }
 
 #[no_mangle]
-pub extern "C" fn simple_sign_message(msg: *const c_char, address: *const c_char, cclient_shim_num_ptr: c_longlong){
-    let mut wallet: wallet::Wallet = wallet::Wallet::load();
+pub extern "C" fn simple_sign_message(msg: *const c_char, wallet_name: *const c_char, address: *const c_char, cclient_shim_num_ptr: c_longlong) -> *mut c_char{
+
+    let wallet_name_c = unsafe { CStr::from_ptr(wallet_name) };
+    let wallet_name_rs = match wallet_name_c.to_str() {
+        Err(_) => "Endpoint Invalid!",
+        Ok(string) => string,
+    };
+
+    let mut wallet: wallet::Wallet = wallet::Wallet::load_from(wallet_name_rs);
     println!("Load wallet: [{}]", wallet.id);
     println!("Sign: ");
     let msg_c = unsafe { CStr::from_ptr(msg) };
@@ -301,18 +350,51 @@ pub extern "C" fn simple_sign_message(msg: *const c_char, address: *const c_char
     hasher.update(msg_buf);
     // read hash digest and consume hasher
     let e_msg = hasher.finalize();
-    wallet.sign(&e_msg, &address_rs, &cclient_shim);
-    println!("Network: [{}], MPC signature verified", &network_rs);
+    let signature = wallet.sign(&e_msg, &address_rs, &cclient_shim);
+
+    let msg_result_json = match signature {
+        Some(sign) => {
+            println!(
+                "sign----hash{:?},\nsignature: [r={},s={}]",
+                e_msg, sign.r, sign.s
+            );
+        
+            println!("Network: [{}], MPC signature verified", &network_rs);
+        
+            json!({
+                "success:":true,
+                "msg": format!("{:?}",e_msg),
+                "sign":{
+                    "r": sign.r,
+                    "s": sign.s,
+                },
+            })
+        },
+
+        None => {
+            json!({
+                "success:":false,
+            })
+        },
+    };
+    let result_str = msg_result_json.to_string();
+    return CString::new(result_str).unwrap().into_raw();
 }
 
 
 #[no_mangle]
-pub extern "C" fn eth_enter(cclient_shim_num_ptr: c_longlong, address: *const c_char){
+pub extern "C" fn eth_enter(cclient_shim_num_ptr: c_longlong,wallet_name: *const c_char, address: *const c_char) -> *mut c_char{
     let cclient_shim_ptr = cclient_shim_num_ptr as *mut ClientShim<reqwest::Client>;
 
     let cclient_shim: &mut ClientShim<reqwest::Client> = unsafe {
         assert!(!cclient_shim_ptr.is_null());
         &mut *cclient_shim_ptr
+    };
+
+    let wallet_name_c = unsafe { CStr::from_ptr(wallet_name) };
+    let wallet_name_rs = match wallet_name_c.to_str() {
+        Err(_) => "Endpoint Invalid!",
+        Ok(string) => string,
     };
 
     let address_c = unsafe { CStr::from_ptr(address) };
@@ -323,7 +405,7 @@ pub extern "C" fn eth_enter(cclient_shim_num_ptr: c_longlong, address: *const c_
 
     const RPC_URL: &str = "https://eth.llamarpc.com";
     println!("'derive: ");
-    let mut wallet: wallet::Wallet = wallet::Wallet::load();
+    let mut wallet: wallet::Wallet = wallet::Wallet::load_from(wallet_name_rs);
     println!("Wallet: [{}], loaded", wallet.id);
 
     let mut rt = tokio::runtime::Runtime::new().unwrap();
@@ -366,5 +448,33 @@ pub extern "C" fn eth_enter(cclient_shim_num_ptr: c_longlong, address: *const c_
     let msg = hasher.finalize();
     let transaction = serde_json::to_string(&tx).unwrap();
     println!("Transaction tx:{:?}", transaction);
-    wallet.sign(&msg, &address_rs, &cclient_shim);
+    let signature = wallet.sign(&msg, &address_rs, &cclient_shim);
+
+    let msg_result_json = match signature {
+        Some(sign) => {
+            println!(
+                "sign----hash{:?},\nsignature: [r={},s={}]",
+                msg, sign.r, sign.s
+            );
+        
+            println!("Network: [{}], MPC signature verified", &address_rs);
+        
+            json!({
+                "success:":true,
+                "msg": format!("{:?}",msg),
+                "sign":{
+                    "r": sign.r,
+                    "s": sign.s,
+                },
+            })
+        },
+
+        None => {
+            json!({
+                "success:":false,
+            })
+        },
+    };
+    let result_str = msg_result_json.to_string();
+    return CString::new(result_str).unwrap().into_raw();
 }
